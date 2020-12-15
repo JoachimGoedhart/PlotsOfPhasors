@@ -40,7 +40,7 @@ VolcaNoseR is created by Franka van der Linden and Joachim Goedhart and maintain
 
 Example output generated with the data from 'lifetime_data.csv':
 
-![alt text](https://github.com/JoachimGoedhart/VolcaNoseR/blob/master/PlotsOfPhasors_1.png "Output")
+![alt text](https://github.com/JoachimGoedhart/PlotsOfPhasors/blob/master/PlotsOfPhasors_1.png "Output")
 
 
 
