@@ -31,10 +31,7 @@ This should launch a web browser with the Shiny app.
 
 ### Credits
 
-PlotsOfPhasors 
-
-
-VolcaNoseR is created by Franka van der Linden and Joachim Goedhart and maintained by Joachim Goedhart ([@joachimgoedhart](https://twitter.com/joachimgoedhart))
+PlotsOfPhasors is created by Franka van der Linden and Joachim Goedhart and maintained by Joachim Goedhart ([@joachimgoedhart](https://twitter.com/joachimgoedhart))
 
 ### Example output
 
