@@ -33,6 +33,7 @@ library(dplyr)
 library(shinycssloaders)
 library(readr)
 library(DT)
+library(patchwork)
 # library(RCurl)
 
 # Load Example data
@@ -66,6 +67,13 @@ make_half_circle <- function(center = c(0,0),diameter = 1, npoints = 100){
 }
 
 
+# Function to shift a vector in a cyclic fashion:
+roll <- function( x , n ){
+  if( n == 0 )
+    return( x )
+  c(tail(x,n),head(x,-n))
+}
+
 #Several qualitative color palettes that are colorblind friendly
 #Code to generate vectors in R to use these palettes
 
@@ -95,8 +103,11 @@ ui <- fluidPage(
             condition = "input.tabs=='Plot'",
 
             h4("Aesthetics"),
+            
+            radioButtons(inputId = "data_type", label = h4("Data display"), choices = list("Dots" = "dots", "Density" = "hexagons","Iso density lines"="iso_density"), selected = "dots"),
+            
 
-            sliderInput("pointSize", "Size of the datapoints", 0, 10, 4),
+            numericInput("pointSize", "Size of lines/points", min=0, max=10, value = 4),
 
             sliderInput("alphaInput", "Visibility of the data", 0, 1, 0.8),
 
@@ -273,7 +284,9 @@ ui <- fluidPage(
                 NULL
               ),
               h4('Select variables for plotting'),
-              
+              checkboxInput(inputId = "GS",
+                            label = "G,S coordinates",
+                            value = FALSE),
               selectInput("x_var", label = "Tau-phi data column", choices = "-"),
               selectInput("y_var", label = "Tau-mod data column", choices = "-"),
               selectInput("g_var", label = "Column that defines groups", choices = "-"),
@@ -285,6 +298,33 @@ ui <- fluidPage(
 
               NULL
               ),
+          
+          conditionalPanel(
+            condition = "input.tabs=='Synthetic'",
+            
+            #Session counter: https://gist.github.com/trestletech/9926129
+            h4("Settings"),
+            numericInput("tau1", "Tau 1", value=4),
+            numericInput("tau2", "Tau 2", value=1),
+            sliderInput("fraction", "Fraction of Tau 2", min = 0, max = 1, animate = TRUE, step = 0.1, value=0),
+            # numericInput("freq2", "Frequency [MHz]", value=40),
+            
+            radioButtons("freq2", "Frequency [MHz]:", choices=c("10"=10,
+                                                                  "20"=20,
+                                                                  "40"=40,
+                                                                  "80"=80,
+                                                                  "160"=160
+                                                                ), selected = 40),
+            
+            
+            numericInput("noise", "Noise", value=1000),
+            numericInput("start", "Pulse offset", value=20),    
+            
+            hr()
+            ),
+          
+          
+          
           conditionalPanel(
             condition = "input.tabs=='About'",
             
@@ -302,20 +342,20 @@ ui <- fluidPage(
       mainPanel(
         tabsetPanel(id="tabs",
                     tabPanel("Data", h4("Data as provided"),dataTableOutput("data_uploaded")),
-                    tabPanel("Plot",h3("Polar Plot"
+                    tabPanel("Plot",h3("Phasor Plot"
                                        ),
-                             downloadButton("downloadPlotPDF", "Download pdf-file"),
-                             #                          downloadButton("downloadPlotSVG", "Download svg-file"),
-                             downloadButton("downloadPlotPNG", "Download png-file"),
-                             
-                             actionButton("settings_copy", icon = icon("clone"),
-                                          label = "Clone current setting"),
+                             # downloadButton("downloadPlotPDF", "Download pdf-file"),
+                             # #                          downloadButton("downloadPlotSVG", "Download svg-file"),
+                             # downloadButton("downloadPlotPNG", "Download png-file"),
+                             # 
+                             # actionButton("settings_copy", icon = icon("clone"),
+                             #              label = "Clone current setting"),
 
                              plotOutput("coolplot",
-                                        height = 'auto',
-                                        hover = hoverOpts("plot_hover", delay = 10, delayType = "debounce")),uiOutput("hover_info")
+                                        height = 'auto')
                               ),
                     # tabPanel("iPlot", h4("iPlot"), plotlyOutput("out_plotly")),
+                    tabPanel("Synthetic", h4("Time-domain and Phasor plot"), plotOutput("decayplot")),
 
                     tabPanel("About", includeHTML("about.html"))
                     )
@@ -342,7 +382,7 @@ df_upload <- reactive({
     if (input$data_input == 1) {
       x_var.selected <<- "tphi"
       y_var.selected <<- "tmod"
-      g_var.selected <- "-"
+      g_var.selected <<- "-"
       data <- df_example
 
     } else if (input$data_input == 2) {
@@ -397,7 +437,7 @@ df_upload <- reactive({
   #Replace space and dot of header names by underscore
   data <- data %>% select_all(~gsub("\\s+|\\.", "_", .))
   
-  observe({print(head(data))})
+  # observe({print(head(data))})
   
     return(data)
   })
@@ -420,16 +460,21 @@ df_tau_upload <- reactive({
   y_choice <- input$y_var
   g_choice <- input$g_var
   
-  df <- df %>% select(`tphi` = !!x_choice , `tmod` = !!y_choice)
 
-  df_out <- lifetime_to_GS(df, MHz=input$freq)
+
+  if(!input$GS) {
+    df <- df %>% select(`tphi` = !!x_choice , `tmod` = !!y_choice)
+    df_out <- lifetime_to_GS(df, MHz=input$freq)
+  } else if (input$GS) {
+    df_out <- df %>% select(`G` = !!x_choice , `S` = !!y_choice)
+  }
   
   if (g_choice != "-") {
     df_treat <- df_upload() %>% select(treatment = !!g_choice)
     df_out$treatment <- df_treat$treatment
   } else {df_out$treatment <- "NA"}
   
-  observe({print(df_out)})
+  # observe({print(df_out)})
   return(df_out)
   
 })
@@ -497,156 +542,20 @@ observe({
 
   })
   
-
-
-
-
-
-############## Render the data summary as a table ###########
+observeEvent(input$GS, {
   
-# output$toptable <- renderTable({
-#     
-#     if (input$show_table == F) return(NULL)
-#     df <- as.data.frame(df_top())
-#     
-#   })
-
-  
-plot_data <- reactive({
-    
-    ############## Adjust X-scaling if necessary ##########
-    
-    #Adjust scale if range for x (min,max) is specified
-    if (input$range_x != "" &&  input$change_scale == TRUE) {
-      rng_x <- as.numeric(strsplit(input$range_x,",")[[1]])
-      observe({ print(rng_x) })
-    } else if (input$range_x == "" ||  input$change_scale == FALSE) {
-      
-      rng_x <- c(NULL,NULL)
-    }
-    
-    ############## Adjust Y-scaling if necessary ##########
-    
-    #Adjust scale if range for y (min,max) is specified
-    if (input$range_y != "" &&  input$change_scale == TRUE) {
-      rng_y <- as.numeric(strsplit(input$range_y,",")[[1]])
-    } else if (input$range_y == "" ||  input$change_scale == FALSE) {
-      
-      rng_y <- c(NULL,NULL)
-    }
-  
-  
-  newColors <- NULL
-  
-  if (input$adjustcolors == 2) {
-    newColors <- Tol_bright
-  } else if (input$adjustcolors == 3) {
-    newColors <- Tol_muted
-  } else if (input$adjustcolors == 4) {
-    newColors <- Tol_light
-  } else if (input$adjustcolors == 6) {
-    newColors <- Okabe_Ito
-  } else if (input$adjustcolors == 5) {
-    newColors <- gsub("\\s","", strsplit(input$user_color_list,",")[[1]])
+  if (input$GS) {
+    updateSelectInput(session, label="G values column:","x_var")
+    updateSelectInput(session, label="S values column:","y_var")
+  }
+  if (!input$GS) {
+    updateSelectInput(session, label="Tau-phi column:","x_var")
+    updateSelectInput(session, label="Tau-mod column:","y_var")
   }
   
-  
-    
-    df <- as.data.frame(df_upload())
-    #Convert 'Change' to a factor to keep this order, necessary for getting the colors right
-    # df$Change <- factor(df$Change, levels=c("Unchanged","Increased","Decreased"))
-    
-    p <-  ggplot(data = df) +
-      aes(x=G) +
-      aes(y=S) +
-      geom_point(alpha = input$alphaInput, size = input$pointSize, shape = 16) +
-      
-      # This needs to go here (before annotations)
-      theme_light(base_size = 16) +
-      # aes(color=Change) + 
-
-      
-      #remove gridlines (if selected
-      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
-      
-      NULL
-    
-    #Indicate cut-offs with dashed lines
-    # if (input$direction !="decreased")  p <- p + geom_vline(xintercept = input$fc_cutoff[2], linetype="dashed")
-    # if (input$direction !="increased")  p <- p + geom_vline(xintercept = input$fc_cutoff[1], linetype="dashed")
-    
-    # p <- p + geom_hline(yintercept = input$p_cutoff, linetype="dashed") 
-    
- 
-    # ########## User defined labeling
-    # if (input$hide_labels == FALSE) {
-    #   p <-  p + geom_point(data=df_top(), aes(x=`Fold change`,y=`Significance`), shape=1,color="black", size=(input$pointSize))+
-    #     geom_text_repel(
-    #       data = df_top(),
-    #       aes(label = Name),
-    #       size = input$fnt_sz_cand,
-    #       color="black",
-    #       nudge_x = 0.2,
-    #       nudge_y=0.2,
-    #       box.padding = unit(0.9, "lines"),
-    #       point.padding = unit(.3+input$pointSize*0.1, "lines"),show.legend=F
-    #       )
-    #
-    # }
-    # 
-    # ########## Top hits labeling 
-    # if (input$hide_labels == FALSE) {
-    #   p <- p + geom_text_repel(
-    #     data = df_top(),
-    #     aes(label = Name),
-    #     size = input$fnt_sz_cand,
-    #     nudge_x = 0.2,
-    #     nudge_y=-0.2,
-    #     # check_overlap = TRUE,
-    #     box.padding = unit(0.35, "lines"),
-    #     point.padding = unit(0.3+input$pointSize*0.1, "lines"),
-    #     show.legend=F
-    #   )
-    #   
-    # }
-    p <- p + coord_cartesian(xlim=c(rng_x[1],rng_x[2]),ylim=c(rng_y[1],rng_y[2]))
-    #### If selected, rotate plot 90 degrees CW ####
-    if (input$rotate_plot == TRUE) { p <- p + coord_flip(xlim=c(rng_x[1],rng_x[2]),ylim=c(rng_y[1],rng_y[2]))}
-    
-    ########## Do some formatting of the lay-out ##########
-    
-    
-    
-    # if title specified
-    if (input$add_title == TRUE) {
-      #Add line break to generate some space
-      title <- paste(input$title, "\n",sep="")
-      p <- p + labs(title = title)
-    }
-    
-    # # if labels specified
-    if (input$label_axes)
-      p <- p + labs(x = input$lab_x, y = input$lab_y)
-    
-    # # if font size is adjusted
-    if (input$adj_fnt_sz) {
-      p <- p + theme(axis.text = element_text(size=input$fnt_sz_ax))
-      p <- p + theme(axis.title = element_text(size=input$fnt_sz_labs))
-      p <- p + theme(plot.title = element_text(size=input$fnt_sz_title))
-    }
-    
-    #remove legend (if selected)
-    if (input$add_legend == FALSE) {  
-      p <- p + theme(legend.position="none")
-    }
-    
-    p
-    
-  })
+})
 
   
-    ##### Render the plot ############
-
   ##### Set width and height of the plot area
   width <- reactive ({ input$plot_width })
   height <- reactive ({ input$plot_height }) 
@@ -715,14 +624,20 @@ output$coolplot <- renderPlot(width = width, height = height, {
     
     # This needs to go here (before annotations)
     p <- p+theme_light(base_size = 18) +
+
     
     #remove gridlines (if selected
     theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
-
+      # theme(title = element_text(family = 'NimbusMon'))
     NULL
     
-
-    p <- p + geom_point(data=df_upload, aes_string(x='G',y='S', color=kleur_data), alpha = input$alphaInput, size = input$pointSize, shape = 16)
+    if (input$data_type == 'dots') {
+      p <- p + geom_point(data=df_upload, aes_string(x='G',y='S', color=kleur_data), alpha = input$alphaInput, size = input$pointSize, shape = 16)
+    } else if (input$data_type == 'iso_density') {
+      p <- p + geom_density2d(data=df_upload, aes_string(x='G',y='S', color=kleur_data), alpha = input$alphaInput, size = input$pointSize)
+    } else if (input$data_type == 'hexagons') {
+      p <- p + geom_hex(data=df_upload, aes_string(x='G',y='S'), alpha = input$alphaInput, size = input$pointSize, bins=100)
+    }
     
   p <- p + coord_cartesian(xlim=c(rng_x[1],rng_x[2]),ylim=c(rng_y[1],rng_y[2]))
 
@@ -752,8 +667,8 @@ output$coolplot <- renderPlot(width = width, height = height, {
   }
   
   
-  
-  if (input$adjustcolors >1 && input$adjustcolors < 7) {
+  if (!input$color_data) {p <- p+ scale_fill_viridis_c()}
+  if (input$color_data && input$adjustcolors >1 && input$adjustcolors < 7) {
     p <- p+ scale_color_manual(values=newColors)
     p <- p+ scale_fill_manual(values=newColors)
   } else if (input$adjustcolors ==7) {
@@ -764,44 +679,64 @@ output$coolplot <- renderPlot(width = width, height = height, {
   p
   })
   
-###### From: https://gitlab.com/snippets/16220 ########
-output$hover_info <- renderUI({
-  df <- as.data.frame(df_tau_upload())
 
-  hover <- input$plot_hover
-  point <- nearPoints(df, hover, threshold = 10, maxpoints = 1, addDist = FALSE)
-  if (nrow(point) == 0) return(NULL)
+
+output$decayplot <- renderPlot(width = 600, height = 800, {
   
-  # calculate point position INSIDE the image as percent of total dimensions
-  # from left (horizontal) and from top (vertical)
-  left_pct <- (hover$x - hover$domain$left) / (hover$domain$right - hover$domain$left)
-  top_pct <- (hover$domain$top - hover$y) / (hover$domain$top - hover$domain$bottom)
+  freq <- (as.numeric(input$freq2))
+  cycle <- 1/(freq*1e6)*1e9 #in nanoseconds
+  bin_time <- cycle/256
   
-  # calculate distance from left and bottom side of the picture in pixels
-  left_px <- hover$range$left + left_pct * (hover$range$right - hover$range$left)
-  top_px <- hover$range$top + top_pct * (hover$range$bottom - hover$range$top)
+  df_decay <- data.frame(time=seq(0,(cycle),bin_time))
   
-  # create style property fot tooltip
-  # background color is set so tooltip is a bit transparent
-  # z-index is set so we are sure are tooltip will be on top
-  style <- paste0("position:absolute;
-                  padding: 5px;
-                  z-index:100; background-color: rgba(200, 200, 245, 0.65); ",
-                  "left:", left_px + 10, "px; top:", top_px + 12, "px;")
+  #Add decay values
+  df_decay <- df_decay %>% mutate(intensity=1000*(1-input$fraction)*exp(-(time)/input$tau1)+
+                                    1000*(input$fraction)*exp(-(time)/input$tau2))
+
+  #Shift the decay, to make it look realistic
+  df_decay$time <- roll(df_decay$time,-20)
+
+  #Generate vector with noise
+  df_decay$noise <- rpois(length(df_decay$time),input$noise)
   
-  # actual tooltip created as wellPanel
-  wellPanel(
-    style = style,
-    p(HTML(paste0("<b> Name: </b>", point$Name, "<br/>",
-                  "<b> tau-phi: </b>", round(point[1],2), "<br/>",
-                  "<b> tau-mod: </b>", round(point[2],2), "<br/>",
-                  # "<b> Number: </b>", rownames(point), "<br/>",
-                  # top_px,
-                  NULL
-    )
-    ))
-  )
+  #Add noise to decay
+  df_decay <- df_decay %>% mutate(int=intensity-input$noise+noise)
+  
+  #Define decay
+  p1 <- ggplot(df_decay, aes(x=time, y=int))+geom_line()+theme_bw(base_size = 14)+
+    geom_vline(xintercept = input$start*bin_time, size=2, alpha=0.3)
+  
+  G <- sum(df_decay$int*cos(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
+  S <- sum(df_decay$int*sin(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
+  df_GS <- data.frame(G=G, S=S)
+  
+  #define a function for a circle
+  make_half_circle <- function(center = c(0,0),diameter = 1, npoints = 100){
+    r = diameter / 2
+    tt <- seq(0,pi,length.out = npoints)
+    xx <- center[1] + r * cos(tt)
+    yy <- center[2] + r * sin(tt)
+    return(data.frame(x = xx, y = yy))
+  }
+  #call the function, with proper centre
+  polar <- make_half_circle(c(0.5,0))
+  #add 0,0 to the dataframe, order the data according to x
+  polar <- rbind(polar,c(0,0))
+  #plot an empty polar plot
+  empty_polar <- ggplot(polar,aes(x,y)) + geom_path() + 
+    coord_fixed(ratio=1, xlim=c(-.1,1.1), ylim=c(-0.1,0.6)) + xlab("G") +ylab("S") + theme_bw(base_size = 14)
+  
+  p2 <- empty_polar + geom_point(data=df_GS, aes(x=G, y=S), alpha=1, color="blue", size=5)
+  
+
+  
+  p1 / p2
+  
+  
+  
 })
+
+
 
   
   ######### DEFINE DOWNLOAD BUTTONS FOR ORDINARY PLOT ###########
