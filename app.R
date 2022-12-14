@@ -67,12 +67,36 @@ make_half_circle <- function(center = c(0,0),diameter = 1, npoints = 100){
 }
 
 
+# https://stackoverflow.com/questions/18791212/circular-shift-of-vector-equivalent-to-numpy-roll
 # Function to shift a vector in a cyclic fashion:
 roll <- function( x , n ){
   if( n == 0 )
     return( x )
   c(tail(x,n),head(x,-n))
 }
+
+#Function to generate a pulse profile that can be used to convolve with the decay
+pulse_profile <- function(shape="none", centre=25, width=11, len=256) {
+  pulse <- seq(0,0,length.out=len)
+  #The R index starts at 1, so we need to add 1 here to match the index with the bins
+  #This seems trivial but it's important to keep track of this
+  i_centre <- centre + 1
+  if (i_centre < 1) {centre <- 0}
+  if (width*2 > len) {width <- len/2}
+  
+  if (shape=="none") {
+    pulse[i_centre] <- 1
+  }
+  if (shape=="block") {
+    pulse[ceiling(i_centre-width/2):(ceiling(i_centre-width/2)+width-1)] <- 1
+  }
+  if (shape=="gauss") {
+    x <- c(1:len)
+    pulse <- exp(-(1/2)*((x-i_centre)/width*2)^2)
+  }
+  return(pulse)
+}
+
 
 #Several qualitative color palettes that are colorblind friendly
 #Code to generate vectors in R to use these palettes
@@ -318,7 +342,16 @@ ui <- fluidPage(
             
             
             numericInput("noise", "Noise", value=1000),
-            numericInput("start", "Pulse offset", value=20),    
+            
+            radioButtons("irf", "Shape of the pulse:", choices=c("block"="block",
+                                                               "Gaussian"="gauss",
+                                                               "none"="none"
+            ), selected = "block"),
+            
+            numericInput("pulse_centre", "Centre of pulse (bin)", value=25),
+            numericInput("pulse_width", "Width of pulse (bin)", value=11),
+            
+            numericInput("start", "Offset for phasor calculation (bin)", value=25),    
             
             hr()
             ),
@@ -555,7 +588,6 @@ observeEvent(input$GS, {
   
 })
 
-  
   ##### Set width and height of the plot area
   width <- reactive ({ input$plot_width })
   height <- reactive ({ input$plot_height }) 
@@ -686,29 +718,52 @@ output$decayplot <- renderPlot(width = 600, height = 800, {
   freq <- (as.numeric(input$freq2))
   cycle <- 1/(freq*1e6)*1e9 #in nanoseconds
   bin_time <- cycle/256
+  n_bins <- 256
+  bins <- c(0:(n_bins-1))
   
-  df_decay <- data.frame(time=seq(0,(cycle),bin_time))
+  
+  df_decay <- data.frame(time=bins*bin_time, bin=bins)
   
   #Add decay values
   df_decay <- df_decay %>% mutate(intensity=1000*(1-input$fraction)*exp(-(time)/input$tau1)+
                                     1000*(input$fraction)*exp(-(time)/input$tau2))
 
-  #Shift the decay, to make it look realistic
-  df_decay$time <- roll(df_decay$time,-20)
 
+  #Define an IRF
+  df_decay$pulse <- pulse_profile(shape=input$irf, centre=input$pulse_centre, width=input$pulse_width, len=n_bins)
+  
+  #Normalize the IRF to an area of 1. In this way, it does not affect the amplitude of the decay
+  df_decay$pulse <- df_decay$pulse/sum(df_decay$pulse)
+  
+  #Convolve pulse with theoretical excited state decay
+  df_decay$intensity <- convolve(df_decay$intensity, rev(df_decay$pulse), type = "c")
+  
   #Generate vector with noise
   df_decay$noise <- rpois(length(df_decay$time),input$noise)
   
   #Add noise to decay
   df_decay <- df_decay %>% mutate(int=intensity-input$noise+noise)
   
-  #Define decay
-  p1 <- ggplot(df_decay, aes(x=time, y=int))+geom_line()+theme_bw(base_size = 14)+
-    geom_vline(xintercept = input$start*bin_time, size=2, alpha=0.3)
+  #Calculate a pulse for display, by normalizing the intensity to the peak of the experimental data
+  df_decay$pulse_plot <- df_decay$pulse/(max(df_decay$pulse))*1000
   
-  G <- sum(df_decay$int*cos(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
-  S <- sum(df_decay$int*sin(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
-  df_GS <- data.frame(G=G, S=S)
+  #Define plot for decay
+  p1 <- ggplot(df_decay, aes(x=time, y=int))+geom_line(color="black", size=1)+theme_bw(base_size = 14)+
+    geom_vline(xintercept = (input$start)*bin_time, size=1, alpha=0.5) +
+    geom_line(aes(x=time, y=pulse_plot), color="blue")
+  
+  # G <- sum(df_decay$int*cos(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
+  # S <- sum(df_decay$int*sin(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
+  
+  G <- sum(df_decay$int*cos(2*3.141593*(df_decay$bin-(input$start))/n_bins))/sum(df_decay$int)
+  S <- sum(df_decay$int*sin(2*3.141593*(df_decay$bin-(input$start))/n_bins))/sum(df_decay$int)
+    
+  G_pulse <- sum(df_decay$pulse*cos(2*3.141593*(df_decay$bin-(input$start))/n_bins))/sum(df_decay$pulse)
+  S_pulse <- sum(df_decay$pulse*sin(2*3.141593*(df_decay$bin-(input$start))/n_bins))/sum(df_decay$pulse)
+  
+  df_GS <- data.frame(G=G, S=S, G_pulse=G_pulse, S_pulse=S_pulse)
+  
+  observe({print(df_GS)})
   
   #define a function for a circle
   make_half_circle <- function(center = c(0,0),diameter = 1, npoints = 100){
@@ -726,7 +781,8 @@ output$decayplot <- renderPlot(width = 600, height = 800, {
   empty_polar <- ggplot(polar,aes(x,y)) + geom_path() + 
     coord_fixed(ratio=1, xlim=c(-.1,1.1), ylim=c(-0.1,0.6)) + xlab("G") +ylab("S") + theme_bw(base_size = 14)
   
-  p2 <- empty_polar + geom_point(data=df_GS, aes(x=G, y=S), alpha=1, color="blue", size=5)
+  p2 <- empty_polar + geom_point(data=df_GS, aes(x=G, y=S), alpha=1, color="black", size=5) +
+    geom_point(data=df_GS, aes(x=G_pulse, y=S_pulse), alpha=1, color="blue", size=5)
   
 
   
@@ -743,7 +799,7 @@ output$decayplot <- renderPlot(width = 600, height = 800, {
   
   output$downloadPlotPDF <- downloadHandler(
     filename <- function() {
-      paste("VolcaNoseR_", Sys.time(), ".pdf", sep = "")
+      paste("PlotsOfPhasors_", Sys.time(), ".pdf", sep = "")
     },
     content <- function(file) {
       pdf(file, width = input$plot_width/72, height = input$plot_height/72)
@@ -757,7 +813,7 @@ output$decayplot <- renderPlot(width = 600, height = 800, {
   
   output$downloadPlotPNG <- downloadHandler(
     filename <- function() {
-      paste("VolcaNoseR_", Sys.time(), ".png", sep = "")
+      paste("PlotsOfPhasors_", Sys.time(), ".png", sep = "")
     },
     content <- function(file) {
       png(file, width = input$plot_width*4, height = input$plot_height*4, res=300)
