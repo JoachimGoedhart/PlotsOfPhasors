@@ -130,7 +130,6 @@ ui <- fluidPage(
             
             radioButtons(inputId = "data_type", label = h4("Data display"), choices = list("Dots" = "dots", "Density" = "hexagons","Iso density lines"="iso_density"), selected = "dots"),
             
-
             numericInput("pointSize", "Size of lines/points", min=0, max=10, value = 4),
 
             sliderInput("alphaInput", "Visibility of the data", 0, 1, 0.8),
@@ -170,9 +169,9 @@ ui <- fluidPage(
             h4("Statistics"),
             
             
-            checkboxInput(inputId = "show_table",
-                          label = "Show table with stats",
-                          value = FALSE),
+            # checkboxInput(inputId = "show_table",
+            #               label = "Show table with stats",
+            #               value = FALSE),
             
             h4("Transformation & Scaling"),
             
@@ -333,20 +332,24 @@ ui <- fluidPage(
             sliderInput("fraction", "Fraction of Tau 2", min = 0, max = 1, animate = TRUE, step = 0.1, value=0),
             # numericInput("freq2", "Frequency [MHz]", value=40),
             
-            radioButtons("freq2", "Frequency [MHz]:", choices=c("10"=10,
+            radioButtons("freq2", "Frequency [MHz]:", choices=c("5"=5,
+                                                                "10"=10,
                                                                   "20"=20,
                                                                   "40"=40,
                                                                   "80"=80,
                                                                   "160"=160
                                                                 ), selected = 40),
             
-            
             numericInput("noise", "Noise", value=1000),
+            
+            checkboxInput(inputId = "scale_log_10",
+                          label = "Log scale for y-axis",
+                          value = FALSE),
             
             radioButtons("irf", "Shape of the pulse:", choices=c("block"="block",
                                                                "Gaussian"="gauss",
-                                                               "none"="none"
-            ), selected = "block"),
+                                                               "none"="none"),
+                         selected = "block"),
             
             numericInput("pulse_centre", "Centre of pulse (bin)", value=25),
             numericInput("pulse_width", "Width of pulse (bin)", value=11),
@@ -748,9 +751,15 @@ output$decayplot <- renderPlot(width = 600, height = 800, {
   df_decay$pulse_plot <- df_decay$pulse/(max(df_decay$pulse))*1000
   
   #Define plot for decay
-  p1 <- ggplot(df_decay, aes(x=time, y=int))+geom_line(color="black", size=1)+theme_bw(base_size = 14)+
-    geom_vline(xintercept = (input$start)*bin_time, size=1, alpha=0.5) +
-    geom_line(aes(x=time, y=pulse_plot), color="blue")
+  p1 <- ggplot(df_decay, aes(x=bin, y=int))+geom_line(color="black", size=1)+theme_bw(base_size = 14)+
+    geom_vline(xintercept = (input$start), size=1, alpha=0.5, linetype="longdash") +
+    geom_line(aes(x=bin, y=pulse_plot), color="blue")
+  # if log-scale checked specified
+  if (input$scale_log_10)
+    p1 <- p1 + scale_y_log10(limits=c(10,NA)) 
+  
+  p1 <- p1 + scale_x_continuous(sec.axis = sec_axis(~ .*bin_time, name="Time [ns]"), breaks=seq(0,256, 64))
+  p1 <- p1 + labs(y="Count", x="Bin number")
   
   # G <- sum(df_decay$int*cos(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
   # S <- sum(df_decay$int*sin(2*3.141593*(df_decay$time-(input$start*bin_time))/cycle))/sum(df_decay$int)
@@ -775,17 +784,20 @@ output$decayplot <- renderPlot(width = 600, height = 800, {
   }
   #call the function, with proper centre
   polar <- make_half_circle(c(0.5,0))
-  #add 0,0 to the dataframe, order the data according to x
-  polar <- rbind(polar,c(0,0))
+  #add 0,0 to the dataframe and 1,0 to close the shape
+  polar <- rbind(polar,c(0,0),c(1,0))
   #plot an empty polar plot
   empty_polar <- ggplot(polar,aes(x,y)) + geom_path() + 
-    coord_fixed(ratio=1, xlim=c(-.1,1.1), ylim=c(-0.1,0.6)) + xlab("G") +ylab("S") + theme_bw(base_size = 14)
+    coord_fixed(ratio=1, xlim=c(-.1,1.1), ylim=c(-0.1,0.6)) + xlab("G") +ylab("S") +
+    scale_x_continuous(breaks=c(0,0.5,1.0)) +
+    scale_y_continuous(breaks=c(0,0.5)) +
+    theme_bw(base_size = 14)
   
   p2 <- empty_polar + geom_point(data=df_GS, aes(x=G, y=S), alpha=1, color="black", size=5) +
     geom_point(data=df_GS, aes(x=G_pulse, y=S_pulse), alpha=1, color="blue", size=5)
   
 
-  
+  #Use patchwork to show both plots:
   p1 / p2
   
   
