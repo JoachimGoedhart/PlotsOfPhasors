@@ -66,15 +66,6 @@ make_half_circle <- function(center = c(0,0),diameter = 1, npoints = 100){
   return(data.frame(G = xx, S = yy))
 }
 
-
-# https://stackoverflow.com/questions/18791212/circular-shift-of-vector-equivalent-to-numpy-roll
-# Function to shift a vector in a cyclic fashion:
-roll <- function( x , n ){
-  if( n == 0 )
-    return( x )
-  c(tail(x,n),head(x,-n))
-}
-
 #Function to generate a pulse profile that can be used to convolve with the decay
 pulse_profile <- function(shape="none", centre=25, width=11, len=256) {
   pulse <- seq(0,0,length.out=len)
@@ -92,7 +83,9 @@ pulse_profile <- function(shape="none", centre=25, width=11, len=256) {
   }
   if (shape=="gauss") {
     x <- c(1:len)
-    pulse <- exp(-(1/2)*((x-i_centre)/width*2)^2)
+    #Gaussian with width defined as width at half of full maximum
+    pulse <- exp(-((x-i_centre)^2/(width/4*sqrt(8*log(2)))^2)) 
+    
   }
   return(pulse)
 }
@@ -332,7 +325,7 @@ ui <- fluidPage(
             sliderInput("fraction", "Fraction of Tau 2", min = 0, max = 1, animate = TRUE, step = 0.1, value=0),
             # numericInput("freq2", "Frequency [MHz]", value=40),
             
-            radioButtons("freq2", "Frequency [MHz]:", choices=c("5"=5,
+            selectInput("freq2", "Frequency [MHz]:", choices=c("5"=5,
                                                                 "10"=10,
                                                                   "20"=20,
                                                                   "40"=40,

@@ -5,9 +5,9 @@ account: amsterdamstudygroup
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 7838735
-bundleId: 6605357
+bundleId: 6643631
 url: https://amsterdamstudygroup.shinyapps.io/PlotsOfPhasors/
-when: 1670429421.07088
-lastSyncTime: 1670429421.0709
+when: 1671179832.83147
+lastSyncTime: 1671179832.83148
 asMultiple: FALSE
 asStatic: FALSE
